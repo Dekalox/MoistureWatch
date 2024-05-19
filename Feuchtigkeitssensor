@@ -1,0 +1,111 @@
+#include <ESP8266WiFi.h>  // Bibliothek für WiFi-Funktionen des ESP8266
+#include <PubSubClient.h> // Bibliothek für die MQTT-Kommunikation
+
+
+// Konfigurationskonstanten
+#define STASSID "Redmi Note 12"   // WiFi-SSID
+#define STAPSK "passwort15"       // WiFi-Passwort
+#define MQTTIP "192.168.104.138"  // IP-Adresse des MQTT-Servers
+#define SUBTOPIC "fasi_topic"     // MQTT-Topic, das abonniert und publiziert wird
+#define PORT 1883                 // Port für MQTT
+#define CLIENTNAME "fasi_sensor"  // Client-Name für MQTT
+
+
+const int dry = 852;       // Kalibrierungswert trocken
+const int wet = 403;       // Kalibrierungswert nässe
+bool debugMode = false;    // Debugmodus
+
+
+WiFiClient espClient;      // Client für die WiFi-Verbindung
+PubSubClient mqttClient(espClient);  // Client für MQTT, nutzt den WiFiClient
+String Message = "fasi_sensor ist bereit";  
+
+
+
+
+// Funktion um den Debugmodus zu starten durch lesen des subtopics
+void callback(char* topic, byte* payload, unsigned int length) {
+  Message = "";  // Leert die vorherige Nachricht
+  for (int i = 0; i < length; i++) {
+    Message += (char)payload[i];  // Wandelt die Nachricht(payload) in einen lesbaren String um
+  }
+  Serial.println("Nachricht: " + Message);
+
+
+  // Speziellen befehl lesen
+  if (Message == "dan") {
+    debugMode = true;  // Aktiviert Debug
+    Serial.println("Debug-Modus aktiviert");
+  } else if (Message == "daus") {
+    debugMode = false; // Deaktiviert Debug
+    Serial.println("Debug-Modus deaktiviert");
+  }
+}
+
+
+// Funktion zum Verbindungsaufbau
+void reconnectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.println("Einwahl in den MQQT-Broker");
+    if (mqttClient.connect(CLIENTNAME)) {
+      Serial.println("Verbindung mit dem MQQT-Broker hergestellt");
+      mqttClient.subscribe(SUBTOPIC, 1);  // Abonniert das Topic
+      Serial.println("Zugriff auf '" SUBTOPIC "'");
+    } else {
+      Serial.println("Nächster Verbindungsversuch mit dem MQQT-Broker in 3 Sekunden");
+      delay(3000);  // Wartet 3 Sekunden, bevor erneut versucht wird, sich zu verbinden
+    }
+  }
+}
+
+
+// Funktion zur Anmeldung im WIFI
+void setup() {
+  Serial.begin(115200);  // Startet die serielle Kommunikation
+  Serial.println("Verbinde mit '" STASSID "'");
+  WiFi.mode(WIFI_STA);  // Setzt das WiFi-Modul in den Station-Modus
+  WiFi.begin(STASSID, STAPSK);  // Startet die Verbindung zum WiFi-Netzwerk
+
+
+  // Wartet, bis die Verbindung hergestellt ist
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");  // Zeigt Fortschritt im seriellen Monitor
+  }
+  Serial.println("");
+  Serial.println("WiFi Verbunden");
+  Serial.println("IP-Adresse: ");
+  Serial.println(WiFi.localIP());  // Zeigt die lokale IP-Adresse an
+
+
+  mqttClient.setServer(MQTTIP, PORT);  // Konfiguriert den MQTT-Server und Port
+  mqttClient.setCallback(callback);    // Registriert die Callback-Funktion
+}
+
+
+// Schleife die hauptsächlich ausgeführt wird
+void loop() {
+  if (!mqttClient.connected()) {
+    reconnectMQTT();  // Stellt die MQTT-Verbindung wieder her, falls nötig
+  }
+  mqttClient.loop();  // Behandelt eingehende Nachrichten und hält die Verbindung aufrecht
+
+
+  int sensorVal = analogRead(A0);  // Liest den Sensorwert
+  int percentageHumidity = map(sensorVal, wet, dry, 100, 0);  // Gibt den Sensorwert in einem lesbaren 0-100 wert aus
+
+
+  // Debug Ausgabe
+  if (debugMode) {
+    char debug[50];
+    sprintf(debug, "Sensorwert: %d, Feuchtigkeit: %d%%", sensorVal, percentageHumidity);
+    mqttClient.publish(SUBTOPIC, debug);  // Sendet Debug-Nachricht
+  } else {
+    Serial.print(percentageHumidity);
+    Serial.println("%");  // Serielle ausgabe
+    char msgBuffer[50];
+    sprintf(msgBuffer, "Feuchtigkeit: %d%%", percentageHumidity);
+    mqttClient.publish(SUBTOPIC, msgBuffer);  // Sendet Feuchtigkeitswert
+  }
+  delay(5000);  // 5 Sekunden Verzögerung
+}
