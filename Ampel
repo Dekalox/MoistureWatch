@@ -1,0 +1,100 @@
+#include <PubSubClient.h>     // Bibliothek für MQTT-Kommunikation
+#include <ESP8266WiFi.h>     // Bibliothek für die WiFi-Funktionen des ESP8266
+#define STASSID "Redmi Note 12"  // SSID des WiFi-Netzwerks
+#define STAPSK "passwort15"      // Passwort für das WiFi-Netzwerk
+#define MQTTIP "192.168.104.138" // IP-Adresse des MQTT-Servers
+#define SUBTOPIC "fasi_topic"    // MQTT-Topic, das abonniert wird
+#define PORT 1883                // Port des MQTT-Servers
+#define CLIENTNAME "fasi_ampel"  // Client-Name für die MQTT-Verbindung
+
+
+static const uint8_t D6 = 12;  // Pin für die grüne LED
+static const uint8_t D7 = 13;  // Pin für die gelbe LED
+static const uint8_t D8 = 15;  // Pin für die rote LED
+
+
+WiFiClient espClient;         // Client für die WiFi-Verbindung
+PubSubClient mqttClient(espClient);  // Client für MQTT, nutzt den WiFiClient
+int Message = 0;
+
+
+// Funktion um Nachricht im subtopic zu lesen
+void callback(char* topic, byte* payload, unsigned int length) {
+  String temp = "";
+  for (int i = 0; i < length; i++) {
+    temp += (char)payload[i]; // Konvertiere Nachricht(Payload) zu einem String
+  }
+  int startIndex = temp.indexOf(':') + 2; // Findet den Startindex des relevanten Wertes
+  int endIndex = temp.indexOf('%');       // Findet das Ende des relevanten Wertes
+  if (startIndex > 0 && endIndex > startIndex) {
+    String valueString = temp.substring(startIndex, endIndex); // Extrahiert die Zahl als String
+    Message = valueString.toInt(); // Konvertiert den String zu einem Integer
+  }
+  Serial.println("Nachricht: " + String(Message)); // Gibt die empfangene Nachricht auf der seriellen Konsole aus
+}
+
+
+// Funktion zum Verbinden mit dem MQTT-Server
+void reconnectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.println("Einwahl in den MQQT-Broker");
+    if (mqttClient.connect(CLIENTNAME)) {
+      Serial.println("Verbindung mit dem MQQT-Broker hergestellt");
+      mqttClient.subscribe(SUBTOPIC, 1);
+    } else {
+      Serial.println("Nächster Verbindungsversuch mit dem MQQT-Broker in 3 Sekunden");
+      delay(3000); // Wartezeit zwischen den Verbindungsversuchen
+    }
+  }
+}
+
+
+void setup() {
+  pinMode(D6, OUTPUT);  // Konfiguriere den Pin für die grüne LED
+  pinMode(D7, OUTPUT);  // Konfiguriere den Pin für die gelbe LED
+  pinMode(D8, OUTPUT);  // Konfiguriere den Pin für die rote LED
+
+
+  Serial.begin(115200); // Serielle Kommunikation
+  delay(50);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(STASSID, STAPSK); // Verbinde mit dem WiFi-Netzwerk
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi verbunden");
+  Serial.println("IP-Adresse: " + WiFi.localIP().toString()); // Zeigt die IP-Adresse an
+
+
+  mqttClient.setServer(MQTTIP, PORT); // Setzt den MQTT-Server und den Port
+  mqttClient.setCallback(callback);   // callback initialisieren
+}
+
+
+void loop() {
+  if (!mqttClient.connected())
+    reconnectMQTT(); // Stelt sicher, dass die Verbindung zum MQTT-Server besteht
+
+
+  mqttClient.loop(); // Bearbeite eingehende und ausgehende MQTT-Nachrichten
+
+
+  // Schalte alle LEDs aus zu Beginn der Schleife
+  digitalWrite(D6, LOW);
+  digitalWrite(D7, LOW);
+  digitalWrite(D8, LOW);
+
+
+  // Bestimme den Zustand der Ampel basierend auf dem empfangenen Wert
+  if (Message >= 0 && Message <= 39) {
+    digitalWrite(D8, HIGH);  // Schalte die rote LED ein
+  } else if (Message >= 40 && Message <= 70) {
+    digitalWrite(D7, HIGH);  // Schalte die gelbe LED ein
+  } else if (Message >= 71 && Message <= 100) {
+    digitalWrite(D6, HIGH);  // Schalte die grüne LED ein
+  }
+
+
+  delay(1000); // Warte 1 Sekunde, bevor der nächste Loop beginnt
+}
